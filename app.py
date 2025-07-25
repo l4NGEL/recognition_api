@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cv2
 import numpy as np
@@ -16,7 +16,8 @@ CORS(app)
 
 USERS_DB_FILE = 'users_db.json'
 KNOWN_FACES_DIR = 'known_faces'
-MOBILFACENET_MODEL_PATH = 'mobilefacenet (1).tflite'
+RECOGNITION_LOG_FILE = 'recognition_logs.json'
+MOBILFACENET_MODEL_PATH = 'mobilefacenet.tflite'
 HAAR_CASCADE_PATH = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
 
 os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
@@ -57,9 +58,9 @@ class FaceRecognitionAPI:
         return faces
 
     def load_known_faces(self):
-        self.known_face_encodings = []
-        self.known_face_names = []
-        self.known_face_ids = []
+        self.known_face_encodings.clear()
+        self.known_face_names.clear()
+        self.known_face_ids.clear()
         if os.path.exists(USERS_DB_FILE):
             with open(USERS_DB_FILE, 'r', encoding='utf-8') as f:
                 users_data = json.load(f)
@@ -76,6 +77,11 @@ class FaceRecognitionAPI:
 
     def add_user(self, name, images_base64, id_no=None, birth_date=None):
         try:
+            if os.path.exists(USERS_DB_FILE):
+                with open(USERS_DB_FILE, 'r', encoding='utf-8') as f:
+                    users_data = json.load(f)
+                if any(user['id_no'] == id_no for user in users_data):
+                    return False, "Bu kimlik numarasına sahip kullanıcı zaten kayıtlı."
             user_id = str(int(datetime.now().timestamp()))
             user_dir = os.path.join(KNOWN_FACES_DIR, user_id)
             os.makedirs(user_dir, exist_ok=True)
@@ -102,6 +108,7 @@ class FaceRecognitionAPI:
                 self.known_face_encodings.append(enc)
                 self.known_face_names.append(name)
                 self.known_face_ids.append(user_id)
+            log_recognition(user_id=user_id, name=name, result='success', image_b64=None, action='kayıt')
             return True, f"Kullanıcı {name} başarıyla eklendi"
         except Exception as e:
             return False, f"Hata: {str(e)}"
@@ -128,12 +135,9 @@ class FaceRecognitionAPI:
             image_array = np.array(image)
             faces = self.detect_faces(image_array)
             if len(faces) == 0:
-                return False, "Yüz tespit edilemedi", None
-            if os.path.exists(USERS_DB_FILE):
-                with open(USERS_DB_FILE, 'r', encoding='utf-8') as f:
-                    users_data = json.load(f)
-            else:
-                users_data = []
+                return False, "Yüz tespit edilemedi"
+            with open(USERS_DB_FILE, 'r', encoding='utf-8') as f:
+                users_data = json.load(f)
             for (x, y, w, h) in faces:
                 face_img = image_array[y:y+h, x:x+w]
                 embedding = self.get_embedding(face_img)
@@ -141,11 +145,12 @@ class FaceRecognitionAPI:
                     if self.compare_embeddings(embedding, known_embedding):
                         user_id = self.known_face_ids[idx]
                         user_info = next((u for u in users_data if u['id'] == user_id), None)
-                        return True, user_info, {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
-            x, y, w, h = faces[0]
-            return False, "Tanınmayan kişi", {'x': int(x), 'y': int(y), 'w': int(w), 'h': int(h)}
+                        log_recognition(user_id, user_info['name'], 'success', face_image_base64, action='tanıma')
+                        return True, user_info
+            log_recognition(None, None, 'fail', face_image_base64, action='tanıma')
+            return False, "Tanınmayan kişi"
         except Exception as e:
-            return False, f"Hata: {str(e)}", None
+            return False, f"Hata: {str(e)}"
 
     def delete_user(self, user_id):
         try:
@@ -178,70 +183,90 @@ class FaceRecognitionAPI:
 
 face_api = FaceRecognitionAPI()
 
+def log_recognition(user_id, name, result, image_b64=None, action=None):
+    log_entry = {
+        'user_id': user_id,
+        'name': name,
+        'date': datetime.now().isoformat(),
+        'result': result,
+        'action': action,
+        'image': image_b64
+    }
+    logs = []
+    if os.path.exists(RECOGNITION_LOG_FILE):
+        with open(RECOGNITION_LOG_FILE, 'r', encoding='utf-8') as f:
+            logs = json.load(f)
+    logs.append(log_entry)
+    with open(RECOGNITION_LOG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(logs, f, ensure_ascii=False, indent=2)
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({'status': 'healthy', 'message': 'API çalışıyor'})
 
 @app.route('/recognize', methods=['POST'])
 def recognize_face():
-    data = request.get_json()
-    face_image_base64 = data.get('image')
-    if not face_image_base64:
-        return jsonify({'success': False, 'message': 'Resim verisi eksik'}), 400
-    success, result, box = face_api.recognize_face(face_image_base64)
-    if success:
-        return jsonify({
-            'success': True,
-            'recognized': True,
-            'name': result.get('name'),
-            'id_no': result.get('id_no'),
-            'birth_date': result.get('birth_date'),
-            'box': box,
-            'message': f"Kişi tanındı: {result.get('name')}"
-        })
-    else:
-        return jsonify({
-            'success': False,
-            'recognized': False,
-            'name': None,
-            'id_no': None,
-            'birth_date': None,
-            'box': box,
-            'message': result
-        })
+    try:
+        data = request.get_json()
+        if not data or 'image' not in data:
+            return jsonify({'success': False, 'message': 'Resim verisi gerekli'}), 400
+        face_image_base64 = data['image']
+        success, result = face_api.recognize_face(face_image_base64)
+        if success:
+            return jsonify({
+                'success': True,
+                'recognized': True,
+                'name': result.get('name'),
+                'id_no': result.get('id_no'),
+                'birth_date': result.get('birth_date'),
+                'message': f"Kişi tanındı: {result.get('name')}"
+            })
+        else:
+            return jsonify({'success': False, 'recognized': False, 'message': result})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
 
 @app.route('/add_user', methods=['POST'])
 def add_user():
-    data = request.get_json()
-    name = data.get('name')
-    images = data.get('images', [])
-    id_no = data.get('id_no')
-    birth_date = data.get('birth_date')
-    if not name or not images or not id_no or not birth_date:
-        return jsonify({'success': False, 'message': 'Tüm bilgiler ve en az 1 resim gerekli'}), 400
-    success, message = face_api.add_user(name, images, id_no, birth_date)
-    return jsonify({'success': success, 'message': message})
+    try:
+        data = request.get_json()
+        name = data['name']
+        images_base64 = data['images']
+        id_no = data['id_no']
+        birth_date = data['birth_date']
+        success, message = face_api.add_user(name, images_base64, id_no, birth_date)
+        return jsonify({'success': success, 'message': message})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
 
 @app.route('/delete_user/<user_id>', methods=['DELETE'])
 def delete_user(user_id):
-    success, message = face_api.delete_user(user_id)
-    return jsonify({'success': success, 'message': message})
+    try:
+        success, message = face_api.delete_user(user_id)
+        return jsonify({'success': success, 'message': message})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
 
 @app.route('/users', methods=['GET'])
 def get_users():
-    users = face_api.get_users()
-    return jsonify({'success': True, 'users': users})
+    try:
+        users = face_api.get_users()
+        return jsonify({'success': True, 'users': users})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
 
-@app.route('/photo/<user_id>/<int:index>.jpg', methods=['GET'])
-def serve_profile_photo(user_id, index):
-    filename = f"{index}.jpg"
-    user_dir = os.path.join(KNOWN_FACES_DIR, user_id)
-    file_path = os.path.join(user_dir, filename)
-    if os.path.exists(file_path):
-        return send_from_directory(user_dir, filename)
-    else:
-        return jsonify({'success': False, 'message': 'Fotoğraf bulunamadı'}), 404
+@app.route('/user_logs/<user_id>', methods=['GET'])
+def get_user_logs(user_id):
+    try:
+        logs = []
+        if os.path.exists(RECOGNITION_LOG_FILE):
+            with open(RECOGNITION_LOG_FILE, 'r', encoding='utf-8') as f:
+                all_logs = json.load(f)
+            logs = [log for log in all_logs if log.get('user_id') == user_id]
+        return jsonify({'success': True, 'logs': logs})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
 
 if __name__ == '__main__':
-    print("Yüz Tanıma API başlatılıyor...")
+    print("Yüz Tanıma API'si başlatılıyor...")
     app.run(host='0.0.0.0', port=5000, debug=True)
