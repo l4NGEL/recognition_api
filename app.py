@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import cv2
 import numpy as np
@@ -10,12 +10,13 @@ from PIL import Image
 import io
 import pickle
 import tensorflow as tf
+import shutil
 
 app = Flask(__name__)
 CORS(app)
 
 USERS_DB_FILE = 'users_db.json'
-KNOWN_FACES_DIR = 'known_faces'
+KNOWN_FACES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'known_faces')
 RECOGNITION_LOG_FILE = 'recognition_logs.json'
 MOBILFACENET_MODEL_PATH = 'mobilefacenet.tflite'
 HAAR_CASCADE_PATH = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
@@ -65,7 +66,7 @@ class FaceRecognitionAPI:
             with open(USERS_DB_FILE, 'r', encoding='utf-8') as f:
                 users_data = json.load(f)
             for user in users_data:
-                user_dir = os.path.join(KNOWN_FACES_DIR, user['id'])
+                user_dir = os.path.join(KNOWN_FACES_DIR, user['id_no'])
                 encodings_file = os.path.join(user_dir, 'encodings.pkl')
                 if os.path.exists(encodings_file):
                     with open(encodings_file, 'rb') as ef:
@@ -73,16 +74,19 @@ class FaceRecognitionAPI:
                         for enc in encodings:
                             self.known_face_encodings.append(enc)
                             self.known_face_names.append(user['name'])
-                            self.known_face_ids.append(user['id'])
+                            self.known_face_ids.append(user['id_no'])
 
     def add_user(self, name, images_base64, id_no=None, birth_date=None):
         try:
+            # id_no 11 hane kontrolü
+            if not id_no or not str(id_no).isdigit() or len(str(id_no)) != 11:
+                return False, "Kimlik numarası 11 haneli olmalıdır."
             if os.path.exists(USERS_DB_FILE):
                 with open(USERS_DB_FILE, 'r', encoding='utf-8') as f:
                     users_data = json.load(f)
                 if any(user['id_no'] == id_no for user in users_data):
                     return False, "Bu kimlik numarasına sahip kullanıcı zaten kayıtlı."
-            user_id = str(int(datetime.now().timestamp()))
+            user_id = str(id_no)
             user_dir = os.path.join(KNOWN_FACES_DIR, user_id)
             os.makedirs(user_dir, exist_ok=True)
             encodings = []
@@ -145,12 +149,58 @@ class FaceRecognitionAPI:
                     if self.compare_embeddings(embedding, known_embedding):
                         user_id = self.known_face_ids[idx]
                         user_info = next((u for u in users_data if u['id'] == user_id), None)
+                        
+                        # Tanınan kişinin fotoğrafını kaydet
+                        self.save_recognition_photo(user_id, image_array, face_img)
+                        
                         log_recognition(user_id, user_info['name'], 'success', face_image_base64, action='tanıma')
                         return True, user_info
             log_recognition(None, None, 'fail', face_image_base64, action='tanıma')
             return False, "Tanınmayan kişi"
         except Exception as e:
             return False, f"Hata: {str(e)}"
+
+    def save_recognition_photo(self, user_id, full_image, face_img):
+        """Tanınan kişinin fotoğrafını zaman damgası ile kaydet"""
+        try:
+            # Zaman damgası oluştur
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Kullanıcının recognition_logs klasörünü oluştur
+            user_dir = os.path.join(KNOWN_FACES_DIR, user_id)
+            recognition_logs_dir = os.path.join(user_dir, 'recognition_logs')
+            timestamp_dir = os.path.join(recognition_logs_dir, timestamp)
+            
+            os.makedirs(timestamp_dir, exist_ok=True)
+            
+            # Tam resmi kaydet
+            full_image_pil = Image.fromarray(full_image)
+            full_image_path = os.path.join(timestamp_dir, 'full_image.jpg')
+            full_image_pil.save(full_image_path, quality=95)
+            
+            # Yüz kısmını kaydet
+            face_pil = Image.fromarray(face_img)
+            face_image_path = os.path.join(timestamp_dir, 'face_crop.jpg')
+            face_pil.save(face_image_path, quality=95)
+            
+            # Tanıma bilgilerini JSON dosyasına kaydet
+            recognition_info = {
+                'timestamp': datetime.now().isoformat(),
+                'user_id': user_id,
+                'files': {
+                    'full_image': 'full_image.jpg',
+                    'face_crop': 'face_crop.jpg'
+                }
+            }
+            
+            info_path = os.path.join(timestamp_dir, 'recognition_info.json')
+            with open(info_path, 'w', encoding='utf-8') as f:
+                json.dump(recognition_info, f, ensure_ascii=False, indent=2)
+                
+            print(f"Tanıma fotoğrafı kaydedildi: {timestamp_dir}")
+            
+        except Exception as e:
+            print(f"Fotoğraf kaydetme hatası: {str(e)}")
 
     def delete_user(self, user_id):
         try:
@@ -165,11 +215,12 @@ class FaceRecognitionAPI:
             users_data.pop(user_index)
             with open(USERS_DB_FILE, 'w', encoding='utf-8') as f:
                 json.dump(users_data, f, ensure_ascii=False, indent=2)
+            
+            # Kullanıcının tüm dosyalarını sil (profil fotoğrafları + tanıma fotoğrafları)
             user_dir = os.path.join(KNOWN_FACES_DIR, user_id)
             if os.path.exists(user_dir):
-                for file in os.listdir(user_dir):
-                    os.remove(os.path.join(user_dir, file))
-                os.rmdir(user_dir)
+                shutil.rmtree(user_dir)
+            
             self.load_known_faces()
             return True, f"Kullanıcı {user_name} başarıyla silindi"
         except Exception as e:
@@ -202,7 +253,38 @@ def log_recognition(user_id, name, result, image_b64=None, action=None):
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    return jsonify({'status': 'healthy', 'message': 'API çalışıyor'})
+    import os
+    return jsonify({
+        'status': 'OK', 
+        'message': 'API çalışıyor', 
+        'timestamp': datetime.now().isoformat(),
+        'current_directory': os.getcwd(),
+        'known_faces_path': os.path.abspath(KNOWN_FACES_DIR)
+    })
+
+@app.route('/test_recognition_logs/<id_no>', methods=['GET'])
+def test_recognition_logs(id_no):
+    """Test endpoint - tanıma loglarını kontrol et"""
+    try:
+        import os
+        current_dir = os.getcwd()
+        recognition_logs_dir = os.path.join(KNOWN_FACES_DIR, id_no, 'recognition_logs')
+        abs_path = os.path.abspath(recognition_logs_dir)
+        exists = os.path.exists(recognition_logs_dir)
+        files = []
+        if exists:
+            files = os.listdir(recognition_logs_dir)
+        return jsonify({
+            'success': True, 
+            'id_no': id_no,
+            'current_directory': current_dir,
+            'directory_exists': exists,
+            'directory_path': recognition_logs_dir,
+            'absolute_path': abs_path,
+            'files': files
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
 
 @app.route('/recognize', methods=['POST'])
 def recognize_face():
@@ -263,6 +345,70 @@ def get_user_logs(user_id):
             with open(RECOGNITION_LOG_FILE, 'r', encoding='utf-8') as f:
                 all_logs = json.load(f)
             logs = [log for log in all_logs if log.get('user_id') == user_id]
+        return jsonify({'success': True, 'logs': logs})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
+
+@app.route('/user_photo/<id_no>/<filename>')
+def user_photo(id_no, filename):
+    user_dir = os.path.join(KNOWN_FACES_DIR, id_no)
+    return send_from_directory(user_dir, filename)
+
+@app.route('/user_photos/<id_no>', methods=['GET'])
+def get_user_photos(id_no):
+    """Kullanıcının profil fotoğraflarını listeler"""
+    try:
+        user_dir = os.path.join(KNOWN_FACES_DIR, id_no)
+        if not os.path.exists(user_dir):
+            return jsonify({'success': True, 'photos': []})
+        
+        photos = []
+        for filename in os.listdir(user_dir):
+            if filename.endswith('.jpg') and filename != 'encodings.pkl':
+                photos.append(filename)
+        
+        # Dosya adlarına göre sırala (1.jpg, 2.jpg, 3.jpg...)
+        photos.sort(key=lambda x: int(x.split('.')[0]) if x.split('.')[0].isdigit() else 0)
+        
+        return jsonify({'success': True, 'photos': photos})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
+
+@app.route('/recognition_photos/<id_no>/<timestamp>/<filename>')
+def recognition_photo(id_no, timestamp, filename):
+    """Tanıma fotoğraflarını görüntülemek için endpoint"""
+    recognition_dir = os.path.join(KNOWN_FACES_DIR, id_no, 'recognition_logs', timestamp)
+    return send_from_directory(recognition_dir, filename)
+
+@app.route('/recognition_logs/<id_no>', methods=['GET'])
+def get_recognition_photos(id_no):
+    """Bir kullanıcının tüm tanıma fotoğraflarını listeler"""
+    try:
+        recognition_logs_dir = os.path.join(KNOWN_FACES_DIR, id_no, 'recognition_logs')
+        if not os.path.exists(recognition_logs_dir):
+            return jsonify({'success': True, 'logs': []})
+        
+        logs = []
+        for timestamp_dir in os.listdir(recognition_logs_dir):
+            timestamp_path = os.path.join(recognition_logs_dir, timestamp_dir)
+            if os.path.isdir(timestamp_path):
+                info_file = os.path.join(timestamp_path, 'recognition_info.json')
+                if os.path.exists(info_file):
+                    with open(info_file, 'r', encoding='utf-8') as f:
+                        info = json.load(f)
+                        logs.append({
+                            'timestamp': timestamp_dir,
+                            'datetime': info.get('timestamp'),
+                            'files': info.get('files', {}),
+                            'photo_urls': {
+                                'full_image': f'/recognition_photos/{id_no}/{timestamp_dir}/full_image.jpg',
+                                'face_crop': f'/recognition_photos/{id_no}/{timestamp_dir}/face_crop.jpg'
+                            }
+                        })
+        
+        # Tarihe göre sırala (en yeni en üstte)
+        logs.sort(key=lambda x: x['datetime'], reverse=True)
+        
         return jsonify({'success': True, 'logs': logs})
     except Exception as e:
         return jsonify({'success': False, 'message': f'Hata: {str(e)}'}), 500
