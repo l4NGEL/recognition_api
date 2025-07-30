@@ -2,4 +2,6 @@ flask
 numpy
 pillow
 tensorflow
-facenet-pytorch 
+facenet-pytorch
+mtcnn
+opencv-python 
