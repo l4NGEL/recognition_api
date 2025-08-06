@@ -1,16 +1,51 @@
 # Face Recognition API & Flutter Client
 
 ## Proje Açıklaması
-Bu proje, Python (Flask) ile yazılmış bir yüz tanıma API'si ve Flutter ile yazılmış bir istemci uygulamasından oluşur. API, MobilFaceNet (TFLite) modelini kullanarak yüz embedding'leri çıkarır ve OpenCV ile yüz algılama yapar. Kullanıcılar eklenebilir, silinebilir ve gerçek zamanlı olarak tanınabilir.
+Bu proje, Python (Flask) ile yazılmış modüler bir yüz tanıma API'si ve Flutter ile yazılmış bir istemci uygulamasından oluşur. API, MobilFaceNet (TFLite) modelini kullanarak yüz embedding'leri çıkarır ve OpenCV ile yüz algılama yapar. Kullanıcılar eklenebilir, silinebilir ve gerçek zamanlı olarak tanınabilir.
+
+---
+
+## Proje Yapısı
+
+### Modüler Mimari
+Proje, sürdürülebilirlik ve okunabilirlik için modüler bir yapıya sahiptir:
+
+```
+recognition_api/
+├── app.py                 # Ana Flask uygulaması (giriş noktası)
+├── config.py             # Konfigürasyon sabitleri
+├── utils.py              # Genel yardımcı fonksiyonlar
+├── face_detection.py     # Yüz algılama ve hizalama
+├── face_recognition.py   # Yüz tanıma API sınıfı
+├── logging.py            # Loglama fonksiyonları
+├── routes.py             # Flask route'ları
+├── requirements.txt      # Python bağımlılıkları
+├── users_db.json         # Kullanıcı veritabanı
+├── known_faces/          # Bilinen yüzler klasörü
+└── README.md            # Bu dosya
+```
+
+### Modül Açıklamaları
+
+- **`app.py`**: Flask uygulamasının ana giriş noktası. CORS yapılandırması ve route'ların başlatılması.
+- **`config.py`**: Proje genelinde kullanılan sabitler (dosya yolları, model yolları vb.).
+- **`utils.py`**: Görüntü artırma, JSON düzeltme, otomatik döndürme gibi genel yardımcı fonksiyonlar.
+- **`face_detection.py`**: MTCNN ve Haar Cascade kullanarak yüz algılama, hizalama ve ön işleme.
+- **`face_recognition.py`**: MobilFaceNet modeli ile yüz embedding'leri çıkarma ve tanıma işlemleri.
+- **`logging.py`**: Tanıma girişimleri ve eşik değişiklikleri için loglama fonksiyonları.
+- **`routes.py`**: Tüm Flask API endpoint'leri ve işleyicileri.
 
 ---
 
 ## Özellikler
-- Yüz algılama: OpenCV Haar Cascade
-- Yüz embedding: MobileFaceNet (TFLite)
-- Kullanıcı ekleme, silme, listeleme
-- Gerçek zamanlı yüz tanıma
-- Flutter istemci ile mobil/web arayüz
+- **Modüler Mimari**: Sürdürülebilir ve genişletilebilir kod yapısı
+- **Yüz Algılama**: MTCNN ve OpenCV Haar Cascade (fallback)
+- **Yüz Embedding**: MobileFaceNet (TFLite) modeli
+- **Kullanıcı Yönetimi**: Ekleme, silme, listeleme
+- **Gerçek Zamanlı Tanıma**: Adaptif eşik değerleri ile
+- **Görüntü Artırma**: Otomatik veri artırma teknikleri
+- **Loglama**: Detaylı tanıma ve eşik logları
+- **Flutter İstemci**: Mobil/web arayüzü
 
 ---
 
@@ -21,7 +56,7 @@ Bu proje, Python (Flask) ile yazılmış bir yüz tanıma API'si ve Flutter ile 
 #### Gereksinimler
 - Python 3.8+
 - pip
-- TensorFlow, OpenCV, Flask, Pillow, numpy
+- TensorFlow, OpenCV, Flask, Pillow, numpy, MTCNN
 
 #### Kurulum Adımları
 
@@ -29,7 +64,7 @@ Bu proje, Python (Flask) ile yazılmış bir yüz tanıma API'si ve Flutter ile 
 # Gerekli paketleri yükle
 pip install -r requirements.txt
 
-# MobileFaceNet TFLite modelini workspace ana dizinine koyun (örn: mobilefacenet (1).tflite)
+# MobileFaceNet TFLite modelini workspace ana dizinine koyun (örn: facenet.tflite)
 
 # API'yi başlat
 python app.py
@@ -76,7 +111,7 @@ Yanıt:
 POST /add_user
 ```
 Body (JSON):
-```
+```json
 {
   "name": "Ad Soyad",
   "id_no": "12345678901",
@@ -90,7 +125,7 @@ Body (JSON):
 POST /recognize
 ```
 Body (JSON):
-```
+```json
 {
   "image": "base64string"
 }
@@ -106,6 +141,40 @@ GET /users
 DELETE /delete_user/<user_id>
 ```
 
+### Tanıma Logları
+```
+GET /recognition_logs
+```
+
+### Eşik Logları
+```
+GET /threshold_logs
+```
+
+### Görüntü Artırma İstatistikleri
+```
+GET /augmentation_stats
+```
+
+---
+
+## Teknik Detaylar
+
+### Yüz Algılama
+- **MTCNN**: Birincil yüz algılama yöntemi (landmark'lar ile)
+- **Haar Cascade**: MTCNN başarısız olduğunda fallback yöntemi
+- **Otomatik Döndürme**: EXIF verilerine göre görüntü yönlendirmesi
+
+### Yüz Tanıma
+- **MobilFaceNet**: TFLite modeli ile embedding çıkarma
+- **Euclidean Distance**: Embedding karşılaştırma yöntemi
+- **Adaptif Eşik**: ROC eğrisi ve yüzdelik tabanlı eşik optimizasyonu
+
+### Görüntü İşleme
+- **Veri Artırma**: Parlaklık/kontrast, gürültü, bulanıklık, keskinleştirme
+- **Geometrik Dönüşümler**: Döndürme, ölçekleme, çevirme
+- **Aydınlatma Simülasyonu**: Farklı aydınlatma koşulları
+
 ---
 
 ## Flutter Entegrasyonu
@@ -115,12 +184,34 @@ DELETE /delete_user/<user_id>
 
 ---
 
+## Geliştirme
+
+### Yeni Özellik Ekleme
+1. İlgili modülde fonksiyon/class ekleyin
+2. `routes.py`'de yeni endpoint tanımlayın
+3. Gerekirse `config.py`'de yeni sabitler ekleyin
+4. Test edin ve dokümantasyonu güncelleyin
+
+### Modül Bağımlılıkları
+```
+app.py
+├── routes.py
+    ├── face_recognition.py
+    │   ├── face_detection.py
+    │   ├── utils.py
+    │   └── logging.py
+    └── config.py
+```
+
+---
+
 ## Önemli Notlar
 - API'yi her zaman aynı dizinden başlatın, aksi halde kullanıcı verileri kaybolabilir.
 - `users_db.json` ve `known_faces/` klasörü silinmemelidir.
 - MobileFaceNet model dosyasını ana dizinde bulundurmalısınız.
 - Android emülatöründe kamera için AVD ayarlarından "Webcam0" seçili olmalı.
 - Geliştirme sunucusu (Flask) prod ortamı için uygun değildir, dağıtıma çıkarken WSGI sunucusu (gunicorn, uWSGI) kullanın.
+- Modüler yapı sayesinde kod bakımı ve genişletilmesi kolaylaştırılmıştır.
 
 ---
 
