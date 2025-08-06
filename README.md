@@ -31,7 +31,7 @@ recognition_api/
 - **`config.py`**: Proje genelinde kullanılan sabitler (dosya yolları, model yolları vb.).
 - **`utils.py`**: Görüntü artırma, JSON düzeltme, otomatik döndürme gibi genel yardımcı fonksiyonlar.
 - **`face_detection.py`**: MTCNN ve Haar Cascade kullanarak yüz algılama, hizalama ve ön işleme.
-- **`face_recognition.py`**: MobilFaceNet modeli ile yüz embedding'leri çıkarma ve tanıma işlemleri.
+- **`face_recognition.py`**: FaceNet modeli ile yüz embedding'leri çıkarma ve tanıma işlemleri.
 - **`logging.py`**: Tanıma girişimleri ve eşik değişiklikleri için loglama fonksiyonları.
 - **`routes.py`**: Tüm Flask API endpoint'leri ve işleyicileri.
 
@@ -40,7 +40,7 @@ recognition_api/
 ## Özellikler
 - **Modüler Mimari**: Sürdürülebilir ve genişletilebilir kod yapısı
 - **Yüz Algılama**: MTCNN ve OpenCV Haar Cascade (fallback)
-- **Yüz Embedding**: MobileFaceNet (TFLite) modeli
+- **Yüz Embedding**: FaceNet (TFLite) modeli
 - **Kullanıcı Yönetimi**: Ekleme, silme, listeleme
 - **Gerçek Zamanlı Tanıma**: Adaptif eşik değerleri ile
 - **Görüntü Artırma**: Otomatik veri artırma teknikleri
