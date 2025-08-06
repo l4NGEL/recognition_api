@@ -208,12 +208,9 @@ app.py
 ## Önemli Notlar
 - API'yi her zaman aynı dizinden başlatın, aksi halde kullanıcı verileri kaybolabilir.
 - `users_db.json` ve `known_faces/` klasörü silinmemelidir.
-- MobileFaceNet model dosyasını ana dizinde bulundurmalısınız.
+- FaceNet model dosyasını ana dizinde bulundurmalısınız.
 - Android emülatöründe kamera için AVD ayarlarından "Webcam0" seçili olmalı.
 - Geliştirme sunucusu (Flask) prod ortamı için uygun değildir, dağıtıma çıkarken WSGI sunucusu (gunicorn, uWSGI) kullanın.
 - Modüler yapı sayesinde kod bakımı ve genişletilmesi kolaylaştırılmıştır.
 
 ---
-
-## Lisans
-MIT
